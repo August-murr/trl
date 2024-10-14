@@ -309,27 +309,31 @@ def get_git_commit_hash(package_name):
     except Exception as e:
         return f"Error: {str(e)}"
 
-def data_mixer_from_json(json_path):
+def data_mixer_from_json(json_path: str):
+    # Load the JSON config file
+    with open(json_path) as f:
+        config = json.load(f)
 
-    # Open and read the JSON file
-    with open(json_path, 'r') as file:
-        configs = json.load(file)
+    # Initialize a dictionary to hold the sampled datasets for each split
+    sampled_datasets_dict = {}
 
-    sampled_datasets = []
-    for config in configs:
-        path, name, split, column, proportion = config
+    # Iterate over each split in the config
+    for split, configs in config.items():
+        sampled_datasets = []
+        for config in configs:
+            path, name, split_name, column, proportion = config
 
-        dataset = load_dataset(path=path, name=name, split=split)
-        num_samples = int(len(dataset) * proportion)
-        dataset_slice = dataset.select(range(num_samples))
-        column = dataset_slice[column]
+            dataset = load_dataset(path=path, name=name, split=split_name)
+            num_samples = int(len(dataset) * proportion)
+            dataset_slice = dataset.select(range(num_samples))
+            column_data = dataset_slice[column]
 
+            sampled_datasets.extend(column_data)
 
-        sampled_datasets.extend(column)
+        combined_dataset = Dataset.from_dict({"text": sampled_datasets}).shuffle(seed=42)
+        sampled_datasets_dict[split] = combined_dataset
 
-    combined_dataset = Dataset.from_dict({"text": sampled_datasets}).shuffle(seed=42)
+    # Wrap the datasets in a DatasetDict with the appropriate splits
+    split_dataset = DatasetDict(sampled_datasets_dict)
 
-    
-    # Wrap the dataset in a DatasetDict with a "train" split
-    split_dataset = DatasetDict({"train": combined_dataset})
     return split_dataset
