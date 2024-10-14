@@ -217,7 +217,7 @@ python examples/scripts/ppo.py --log_with wandb --use_score_scaling --use_score_
 
 ## Mixing Datasets with CLI
 
-You can now mix multiple datasets for training by providing a JSON config that details both the training and testing sets. The config should specify the path, name (or subset), split, column, and the proportion of each dataset you want to use.
+You can mix multiple datasets for training by providing a JSON config that details both the training and testing sets.
 
 #### Config Structure
 The JSON config should have two keys: `"train"` and `"test"`, each containing a list of datasets to mix. For each dataset, you must provide the following five fields in order:
