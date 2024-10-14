@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 import yaml
 from transformers import HfArgumentParser
 
+from datasets import load_dataset,Dataset,DatasetDict
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +90,7 @@ class SFTScriptArguments:
     dataset_train_split: str = field(default="train", metadata={"help": "The dataset split to train on"})
     dataset_test_split: str = field(default="test", metadata={"help": "The dataset split to evaluate on"})
     config: str = field(default=None, metadata={"help": "Path to the optional config file"})
+    mixer_config: str = field(default=None, metadata={"help": "Path to the optional data mixer config file"})
     gradient_checkpointing_use_reentrant: bool = field(
         default=False,
         metadata={"help": "Whether to apply `use_reentrant` for gradient_checkpointing"},
@@ -305,3 +308,28 @@ def get_git_commit_hash(package_name):
             return None
     except Exception as e:
         return f"Error: {str(e)}"
+
+def data_mixer_from_json(json_path):
+
+    # Open and read the JSON file
+    with open(json_path, 'r') as file:
+        configs = json.load(file)
+
+    sampled_datasets = []
+    for config in configs:
+        path, name, split, column, proportion = config
+
+        dataset = load_dataset(path=path, name=name, split=split)
+        num_samples = int(len(dataset) * proportion)
+        dataset_slice = dataset.select(range(num_samples))
+        column = dataset_slice[column]
+
+
+        sampled_datasets.extend(column)
+
+    combined_dataset = Dataset.from_dict({"text": sampled_datasets}).shuffle(seed=42)
+
+    
+    # Wrap the dataset in a DatasetDict with a "train" split
+    split_dataset = DatasetDict({"train": combined_dataset})
+    return split_dataset
