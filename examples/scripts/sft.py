@@ -88,6 +88,7 @@ if __name__ == "__main__":
     ################
     # Dataset
     ################
+    #use data mixer if mixer_config is provided
     if script_args.mixer_config:
         dataset = data_mixer_from_json(script_args.mixer_config)
         training_args.dataset_text_field = "text"

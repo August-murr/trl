@@ -308,7 +308,7 @@ def get_git_commit_hash(package_name):
             return None
     except Exception as e:
         return f"Error: {str(e)}"
-
+#uses json file to create a mixed dataset
 def data_mixer_from_json(json_path: str):
     # Load the JSON config file
     with open(json_path) as f:
@@ -320,16 +320,17 @@ def data_mixer_from_json(json_path: str):
     # Iterate over each split in the config
     for split, configs in config.items():
         sampled_datasets = []
+        # Iterate over each dataset config in the split
         for config in configs:
             path, name, split_name, column, proportion = config
-
+            # Load the dataset and sample the required proportion of examples
             dataset = load_dataset(path=path, name=name, split=split_name)
             num_samples = int(len(dataset) * proportion)
             dataset_slice = dataset.select(range(num_samples))
             column_data = dataset_slice[column]
 
             sampled_datasets.extend(column_data)
-
+        # Combine the sampled datasets into a single dataset
         combined_dataset = Dataset.from_dict({"text": sampled_datasets}).shuffle(seed=42)
         sampled_datasets_dict[split] = combined_dataset
 
