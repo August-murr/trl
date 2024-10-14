@@ -90,6 +90,7 @@ if __name__ == "__main__":
     ################
     if script_args.mixer_config:
         dataset = data_mixer_from_json(script_args.mixer_config)
+        training_args.dataset_text_field = "text"
         print("mixing data")
         print(dataset)
     else:
