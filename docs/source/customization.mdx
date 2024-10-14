@@ -219,7 +219,7 @@ python examples/scripts/ppo.py --log_with wandb --use_score_scaling --use_score_
 
 You can mix multiple datasets for training by providing a JSON config that details both the training and testing sets.
 
-#### Config Structure
+### Config Structure
 The JSON config should have two keys: `"train"` and `"test"`, each containing a list of datasets to mix. For each dataset, you must provide the following five fields in order:
 1. **Path**: The path to the dataset (e.g., `"lighteval/mmlu"`).
 2. **Name**: The subset of the dataset (if applicable). If there is no subset, pass `null`.
