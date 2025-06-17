@@ -162,39 +162,27 @@ class CodeAgentEnvironment(Environment):
         self, vllm_client: Any, generation_config: VLLMClientGenerationConfig, prompts: list[str]
     ) -> list[str]:
         """Run the agent with code execution and return completed text responses.
-    
+
         Args:
             vllm_client: VLLM client instance.
             generation_config: Configuration for generation parameters.
             prompts: Input prompts for generation.
-    
+
         Returns:
             list[str]: Completed text responses with code execution results.
         """
-        # Track conversations by prompt index and copy index
-        conversation_map = {}
+        completed_conversations = []
         active_conversations = []
-        active_conversations_metadata = []  # Store (prompt_idx, copy_idx) for each active conversation
-        
-        # Store original prompt lengths to track completion length
-        prompt_lengths = {}
-    
-        # Expand initial prompts based on n
-        for prompt_idx, prompt in enumerate(prompts):
-            for copy_idx in range(generation_config.n):
-                active_conversations.append(prompt)
-                active_conversations_metadata.append((prompt_idx, copy_idx))
-                # Store original prompt length in tokens
-                prompt_lengths[(prompt_idx, copy_idx)] = len(self.tokenizer.encode(prompt, add_special_tokens=False))
-    
-        # Maximum total tokens across all steps (use max_tokens as the limit for entire conversation)
-        total_max_tokens = generation_config.max_tokens
-    
+
+        # Expand initial prompts based on n, storing a tuple of (conversation_text, generated_token_count)
+        for prompt in prompts:
+            active_conversations.extend([(prompt, 0)] * generation_config.n)
+
         # Ensure stop_string is always in the stop sequences for generation
         stop_sequences = [self.stop_string]
         if generation_config.stop:
             stop_sequences = list(set(stop_sequences + generation_config.stop))
-    
+
         # Create a generation config for individual steps (n=1)
         step_gen_config = VLLMClientGenerationConfig(
             n=1,
@@ -207,81 +195,57 @@ class CodeAgentEnvironment(Environment):
             guided_decoding_regex=generation_config.guided_decoding_regex,
             stop=stop_sequences,
         )
-    
+
         while active_conversations:
-            outputs = vllm_client.generate(prompts=active_conversations, **vars(step_gen_config))
-    
+            # Extract only conversation text for generation
+
+            # Adjust max_tokens to avoid exceeding the limit
+            step_gen_config.max_tokens = max(generation_config.max_tokens - conv[1] for conv in active_conversations)
+
+            current_texts = [conv[0] for conv in active_conversations]
+            outputs = vllm_client.generate(prompts=current_texts, **vars(step_gen_config))
+
             next_active_conversations = []
-            next_active_conversations_metadata = []
             code_batch = []
             conversations_pending_code = []
-            pending_code_metadata = []  # Track metadata for conversations pending code execution
-    
+
             for i, generated_token_ids in enumerate(outputs):
-                current_prompt = active_conversations[i]
-                current_metadata = active_conversations_metadata[i]
-    
-                # Check if the generated_token_ids list is valid
+                current_prompt, token_count_so_far = active_conversations[i]
+
+                # Check if the generated_token_ids list is valid; if not, complete this conversation.
                 if not isinstance(generated_token_ids, list):
-                    conversation_map[current_metadata] = current_prompt
+                    completed_conversations.append(current_prompt)
                     continue
-    
-                # Decode the newly generated part
-                generated_text = self.tokenizer.decode(generated_token_ids, skip_special_tokens=True)
-    
+
+                # Decode the newly generated part and update token count based on new tokens.
+                generated_text = self.tokenizer.decode(generated_token_ids)
+                new_token_count = token_count_so_far + len(generated_token_ids)
                 full_conversation_segment = current_prompt + generated_text
-                
-                # Check if the current completion exceeds the total token limit
-                completion_tokens_length = len(self.tokenizer.encode(full_conversation_segment, add_special_tokens=False)) - prompt_lengths[current_metadata]
-                
-                if completion_tokens_length > total_max_tokens:
-                    # Truncate the completion to stay within the limit
-                    # Get original prompt
-                    original_prompt = ""
-                    for prompt in prompts:
-                        if full_conversation_segment.startswith(prompt):
-                            original_prompt = prompt
-                            break
-                    
-                    # Encode prompt and full conversation
-                    prompt_tokens = self.tokenizer.encode(original_prompt, add_special_tokens=False)
-                    full_tokens = self.tokenizer.encode(full_conversation_segment, add_special_tokens=False)
-                    
-                    # Calculate where to truncate
-                    truncate_at = len(prompt_tokens) + total_max_tokens
-                    truncated_tokens = full_tokens[:truncate_at]
-                    
-                    # Decode back to text
-                    truncated_conversation = self.tokenizer.decode(truncated_tokens, skip_special_tokens=False)
-                    
-                    # Add to completed conversations and skip further processing
-                    conversation_map[current_metadata] = truncated_conversation
+
+                # If token count exceeds max_tokens, move conversation to completed
+                if new_token_count > generation_config.max_tokens:
+                    completed_conversations.append(full_conversation_segment)
                     continue
-    
+
                 # Check if the generation stopped because of our specific code stop string
                 stopped_by_code_tag = generated_text.rstrip().endswith(self.stop_string.rstrip())
-    
-                # Check if code execution is requested IN THE NEWLY GENERATED TEXT
+
+                # Check if code execution is requested in the newly generated text
                 last_code_start_in_segment = full_conversation_segment.rfind(self.parsing_string)
                 is_code_in_new_text = last_code_start_in_segment != -1 and last_code_start_in_segment >= len(
                     current_prompt
                 )
-    
+
                 if is_code_in_new_text and stopped_by_code_tag:
-                    # Extract code from the full segment, as extract_code finds the last block
                     code = self.extract_code(full_conversation_segment)
                     if code:
                         code_batch.append(code)
-                        conversations_pending_code.append(full_conversation_segment)
-                        pending_code_metadata.append(current_metadata)
+                        conversations_pending_code.append((full_conversation_segment, new_token_count))
                     else:
-                        # Parsing string found, but extraction failed. Treat as complete.
-                        conversation_map[current_metadata] = full_conversation_segment
+                        completed_conversations.append(full_conversation_segment)
                 else:
-                    # Generation finished (max tokens, other stop word) or no code detected in the new part
-                    conversation_map[current_metadata] = full_conversation_segment
-    
-            # Execute code batch if any code was extracted
+                    completed_conversations.append(full_conversation_segment)
+
             if code_batch:
                 try:
                     execution_results = self.code_executer.execute(code_batch)
@@ -289,33 +253,28 @@ class CodeAgentEnvironment(Environment):
                         raise ValueError(
                             f"Mismatch between code batch size ({len(code_batch)}) and results ({len(execution_results)})"
                         )
-    
-                    # Append results and add back to active conversations for the next round
-                    for i, (conversation, result, metadata) in enumerate(
-                        zip(conversations_pending_code, execution_results, pending_code_metadata)
-                    ):
-                        updated_conversation = (
-                            conversation + f"{self.output_string_start}{result}{self.output_string_end}"
-                        )
-                        next_active_conversations.append(updated_conversation)
-                        next_active_conversations_metadata.append(metadata)
+
+                    for (conversation, token_count), result in zip(conversations_pending_code, execution_results):
+                        code_output = f"{self.output_string_start}{result}{self.output_string_end}"
+                        updated_conversation = conversation + code_output
+                        code_output_token_count = len(self.tokenizer.encode(code_output))
+                        if token_count + code_output_token_count >= generation_config.max_tokens:
+                            completed_conversations.append(updated_conversation)
+                        else:
+                            next_active_conversations.append(
+                                (updated_conversation, token_count + code_output_token_count)
+                            )
                 except Exception:
-                    # Add pending as completed on error
-                    for conv, metadata in zip(conversations_pending_code, pending_code_metadata):
-                        conversation_map[metadata] = conv
-    
-            # Update the list of conversations for the next iteration
+                    completed_conversations.extend([conv for conv, _ in conversations_pending_code])
+
             active_conversations = next_active_conversations
-            active_conversations_metadata = next_active_conversations_metadata
-    
-        # Reconstruct ordered list of completed conversations
-        completed_conversations = []
-        for prompt_idx in range(len(prompts)):
-            for copy_idx in range(generation_config.n):
-                metadata = (prompt_idx, copy_idx)
-                if metadata in conversation_map:
-                    completed_conversations.append(conversation_map[metadata])
-    
+
+        # Rencode and truncate completed conversations to max_tokens if necessary
+        completed_conversations = [
+            self.tokenizer.decode(self.tokenizer.encode(conv)[: generation_config.max_tokens])
+            for conv in completed_conversations
+        ]
+
         return completed_conversations
 
     def mask_tool_output(
@@ -435,14 +394,14 @@ class CodeAgentEnvironment(Environment):
                     completion_text = final_output[start_index:]
                     found_prompt = True
                     break
-            
+
             if not found_prompt:
-                print(f"Warning: No matching prompt found in completion. Using full output.")
+                print("Warning: No matching prompt found in completion. Using full output.")
                 completion_text = final_output
-            
+
             # Store the actual text completion for debugging
             extracted_completions.append(completion_text)
-            
+
             # Convert to token IDs
             completion_token_ids = self.tokenizer.encode(completion_text, add_special_tokens=True)
             completion_ids.append(completion_token_ids)
