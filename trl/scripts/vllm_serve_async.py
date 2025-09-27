@@ -29,7 +29,6 @@ from multiprocessing.connection import Connection
 from typing import Optional
 
 import torch
-from accelerate import logging
 from transformers import is_torch_xpu_available, is_vision_available
 
 from trl import TrlParser
@@ -77,7 +76,7 @@ if is_vllm_available():
         ASYNC_ENGINE_AVAILABLE = False
 
 
-logger = logging.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 # We use CUDA with multiprocessing, so we must use the 'spawn' start method. Otherwise, we will get the following
 # error: RuntimeError: Cannot re-initialize CUDA in forked subprocess. To use CUDA with multiprocessing, you must use
@@ -456,7 +455,7 @@ async def main(script_args: ScriptArguments):
         # Wait for all workers to be ready
         for connection in connections:
             response = connection.recv()
-            logger.info(f"Worker ready: {response}")
+            print(f"Worker ready: {response}")
 
         # Get the LLM instances from workers
         for connection in connections:
@@ -688,9 +687,9 @@ async def main(script_args: ScriptArguments):
 
 def make_parser(subparsers: Optional[argparse._SubParsersAction] = None):
     if subparsers is not None:
-        parser = subparsers.add_parser("vllm-serve-async", help="Start an async vLLM server")
+        parser = subparsers.add_parser("vllm-serve-async", help="Start an async vLLM server", dataclass_types=ScriptArguments)
     else:
-        parser = TrlParser(description="Start an async vLLM server")
+        parser = TrlParser(ScriptArguments)
     return parser
 
 
