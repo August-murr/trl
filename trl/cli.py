@@ -29,6 +29,8 @@ from .scripts.sft import make_parser as make_sft_parser
 from .scripts.utils import TrlParser
 from .scripts.vllm_serve import main as vllm_serve_main
 from .scripts.vllm_serve import make_parser as make_vllm_serve_parser
+from .scripts.vllm_serve_async import main as vllm_serve_async_main
+from .scripts.vllm_serve_async import make_parser as make_vllm_serve_async_parser
 
 
 logger = logging.get_logger(__name__)
@@ -48,6 +50,7 @@ def main():
     make_rloo_parser(subparsers)
     make_sft_parser(subparsers)
     make_vllm_serve_parser(subparsers)
+    make_vllm_serve_async_parser(subparsers)
 
     # Parse the arguments; the remaining ones (`launch_args`) are passed to the 'accelerate launch' subparser.
     # Duplicates may occur if the same argument is provided in both the config file and CLI.
@@ -145,6 +148,22 @@ def main():
             )
 
         vllm_serve_main(script_args)
+
+    elif args.command == "vllm-serve-async":
+        import asyncio
+        (script_args,) = parser.parse_args_and_config()
+
+        # Known issue: Using DeepSpeed with tensor_parallel_size=1 and data_parallel_size>1 may cause a crash when
+        # launched via the CLI. Suggest running the module directly.
+        # More information: https://github.com/vllm-project/vllm/issues/17079
+        if script_args.tensor_parallel_size == 1 and script_args.data_parallel_size > 1 and torch.cuda.is_available():
+            logger.warning(
+                "Detected configuration: tensor_parallel_size=1 and data_parallel_size>1. This setup is known to "
+                "cause a crash when using the `trl vllm-serve-async` CLI entry point. As a workaround, please run "
+                "the server using the module path instead: `python -m trl.scripts.vllm_serve_async`",
+            )
+
+        asyncio.run(vllm_serve_async_main(script_args))
 
 
 if __name__ == "__main__":

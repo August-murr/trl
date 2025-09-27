@@ -26,6 +26,7 @@ from transformers.utils.import_utils import _is_package_available
 LIGER_KERNEL_MIN_VERSION = "0.5.8"
 
 # Use same as transformers.utils.import_utils
+_aiohttp_available = _is_package_available("aiohttp")
 _deepspeed_available = _is_package_available("deepspeed")
 _fastapi_available = _is_package_available("fastapi")
 _joblib_available = _is_package_available("joblib")
@@ -39,6 +40,10 @@ _uvicorn_available = _is_package_available("uvicorn")
 _vllm_available, _vllm_version = _is_package_available("vllm", return_version=True)
 _vllm_ascend_available = _is_package_available("vllm_ascend")
 _weave_available = _is_package_available("weave")
+
+
+def is_aiohttp_available() -> bool:
+    return _aiohttp_available
 
 
 def is_deepspeed_available() -> bool:
